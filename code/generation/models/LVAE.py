@@ -27,7 +27,8 @@ class LVAE(nn.Module):
         initial_filters,
         learn_curvature = False,
         enc_K = 1.0,
-        dec_K = 1.0
+        dec_K = 1.0,
+        rank:int = 2
     ):
         super(LVAE, self).__init__()
 
@@ -37,7 +38,8 @@ class LVAE(nn.Module):
             z_dim, 
             initial_filters, 
             learn_curvature, 
-            enc_K
+            enc_K,
+            rank=rank
         )
         self.embedding = H_Embedding(z_dim, share_manifold=self.encoder.manifold)
 
@@ -47,7 +49,8 @@ class LVAE(nn.Module):
             z_dim, 
             initial_filters*(2**(enc_layers-1)), 
             learn_curvature, 
-            dec_K
+            dec_K,
+            rank=rank
         )
 
     def check_k_embed(self, x):
@@ -84,10 +87,12 @@ class LVAE(nn.Module):
         return self.forward(x)[0]
 
     def forward(self, x):
-        mean, var = self.encoder(x)
+        mean, var = self.encoder(x) # outputs (I assume) 1+(8x8)
+        print('mean', mean.shape)
         mean_dec = self.check_k_embed(mean)
         z, mean_H, covar, u, v = self.embedding(mean_dec, var)
         z_dec = self.check_k_dec(z)
+        print('z_dec', z_dec.shape)
         x_hat = self.decoder(z_dec)
 
         return x_hat, z, mean_H, covar, u, v

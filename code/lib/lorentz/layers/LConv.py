@@ -66,6 +66,91 @@ class LorentzConv1d(nn.Module):
 
         return out
 
+class LorentzConvTranspose1d(nn.Module):
+    """ Implements a fully hyperbolic 2D transposed convolutional layer using the Lorentz model.
+
+    Args:
+        manifold: Instance of Lorentz manifold
+        in_channels, out_channels, kernel_size, stride, padding, output_padding, bias: Same as nn.ConvTranspose1d
+        LFC_normalize: If Chen et al.'s internal normalization should be used in LFC 
+    """
+    def __init__(
+            self, 
+            manifold: CustomLorentz, 
+            in_channels, 
+            out_channels, 
+            kernel_size, 
+            stride=1, 
+            padding=0, 
+            output_padding=0, 
+            bias=True,
+            LFC_normalize=False
+        ):
+        super().__init__()
+
+        self.manifold = manifold
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.padding = padding
+        self.output_padding = output_padding
+
+        # Ensure padding > kernel_size
+        padding_implicit = kernel_size - self.padding - 1 
+
+        # NOTE(ycho): not sure
+        if False:
+            self.pad_weight = nn.Parameter(F.pad(
+                torch.ones((self.in_channels, 1)),
+                (1,1))[:,None],
+            requires_grad=False) # => 9,3
+        else:
+            w = F.pad(torch.ones((self.in_channels,1,1,1)),
+                                             (1,1,1,1))
+            w = w[..., 0].detach().clone()
+            self.pad_weight = nn.Parameter(w, requires_grad=False)
+        # (c_in, c_out/g, kW)
+        # print('pw', self.pad_weight.shape) 
+
+        self.conv = LorentzConv1d(
+            manifold=manifold, 
+            in_channels=in_channels, 
+            out_channels=out_channels, 
+            kernel_size=kernel_size, 
+            stride=1, 
+            padding=padding_implicit, 
+            bias=bias, 
+            LFC_normalize=LFC_normalize
+        )
+
+    def forward(self, x):
+        """
+        x has to be in channel last representation
+        -> Shape = bs x S x C
+        """
+        # print(F'got x = {x.shape}')
+        if self.stride > 1:
+            # Insert hyperbolic origin vectors between features
+            x = x.permute(0,2,1) # 1,8,17 # NSC -> NCS
+            # -> Insert zero vectors
+            x = F.conv_transpose1d(x,
+                                   self.pad_weight,
+                                   stride=self.stride,
+                                   padding=1,
+                                   groups=self.in_channels)
+            x = x.permute(0,2,1) # NCS -> NSC
+            x[..., 0].clamp_(min=self.manifold.k.sqrt())
+
+        x = self.conv(x)
+
+        if self.output_padding > 0:
+            # Pad one side of each dimension (bottom+right) (see PyTorch documentation)
+            x = F.pad(x, pad=(0, self.output_padding)) 
+            x[..., 0].clamp_(min=self.manifold.k.sqrt()) # Fix origin padding
+        # print(F'out x = {x.shape}')
+        return x
 
 class LorentzConv2d(nn.Module):
     """ Implements a fully hyperbolic 2D convolutional layer using the Lorentz model.
@@ -216,7 +301,9 @@ class LorentzConvTranspose2d(nn.Module):
         padding_implicit[0] = kernel_size - self.padding[0] - 1 # Ensure padding > kernel_size
         padding_implicit[1] = kernel_size - self.padding[1] - 1 # Ensure padding > kernel_size
 
-        self.pad_weight = nn.Parameter(F.pad(torch.ones((self.in_channels,1,1,1)),(1,1,1,1)), requires_grad=False)
+        self.pad_weight = nn.Parameter(F.pad(torch.ones((self.in_channels,1,1,1)),
+                                             (1,1,1,1)), requires_grad=False)
+        # print('pw', self.pad_weight.shape) # 9,1,3,3
 
         self.conv = LorentzConv2d(
             manifold=manifold, 
@@ -233,10 +320,19 @@ class LorentzConvTranspose2d(nn.Module):
         """ x has to be in channel last representation -> Shape = bs x H x W x C """
         if self.stride[0] > 1 or self.stride[1] > 1:
             # Insert hyperbolic origin vectors between features
-            x = x.permute(0,3,1,2)
+            x = x.permute(0,3,1,2) # NHWC -> NCHW
             # -> Insert zero vectors
-            x = F.conv_transpose2d(x, self.pad_weight,stride=self.stride,padding=1, groups=self.in_channels)
-            x = x.permute(0,2,3,1)
+            # print('x', x.shape)
+            # print(self.pad_weight)
+            x0 = x
+            x = F.conv_transpose2d(x,
+                                   self.pad_weight,
+                                   stride=self.stride, 
+                                   padding=1,
+                                   groups=self.in_channels)
+            x1 = x
+            # print(x0 - x1[:,:,
+            x = x.permute(0,2,3,1) # NCHW -> NHWC
             x[..., 0].clamp_(min=self.manifold.k.sqrt())
 
         x = self.conv(x)

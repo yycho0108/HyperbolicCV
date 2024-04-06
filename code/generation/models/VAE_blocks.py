@@ -7,7 +7,9 @@ from torch.nn import Flatten, Sequential
 from lib.lorentz.manifold import CustomLorentz
 from lib.lorentz.layers import LorentzMLR
 from lib.lorentz.distributions import LorentzWrappedNormal
-from lib.lorentz.blocks.layer_blocks import LFC_Block, LConv2d_Block, LTransposedConv2d_Block
+from lib.lorentz.blocks.layer_blocks import (
+        LFC_Block, LConv2d_Block, LTransposedConv2d_Block,
+        LConv1d_Block, LTransposedConv1d_Block)
 
 from lib.geoopt.manifolds.stereographic import PoincareBall
 from lib.poincare.distributions import PoincareWrappedNormal
@@ -26,7 +28,9 @@ class H_Encoder(nn.Module):
             z_dim,
             initial_filters,
             learn_curvature = False,
-            curvature = 1.0
+            curvature = 1.0,
+            rank:int = 2,
+            flat:bool= True
         ):
         super(H_Encoder, self).__init__()
 
@@ -37,11 +41,22 @@ class H_Encoder(nn.Module):
 
         self.z_dim = z_dim
 
-        d,h,w = img_dim
-        self.z_h, self.z_w = int(h/(2**num_layers)), int(w/(2**num_layers))
+        self.rank = rank
 
-        self.z_filters = int(initial_filters*2**(num_layers-1))
-        self.flatten_dim = int(self.z_h*self.z_w*self.z_filters)
+        if rank == 2:
+            d,h,w = img_dim
+            self.z_h, self.z_w = int(h/(2**num_layers)), int(w/(2**num_layers))
+            self.z_filters = int(initial_filters*2**(num_layers-1))
+            self.flatten_dim = int(self.z_h*self.z_w*self.z_filters)
+            print('fdim', self.flatten_dim) # fdim = 2048
+            blk_cls = LConv2d_Block 
+        else:
+            d,s = img_dim
+            self.z_s = int(s/(2**num_layers))
+            self.z_filters = int(initial_filters*2**(num_layers-1))
+            self.flatten_dim = int(self.z_s*self.z_filters)
+            print('fdim', self.flatten_dim)
+            blk_cls = LConv1d_Block 
 
         # Convolutional layers
         self.conv_layers = nn.Sequential()
@@ -52,7 +67,7 @@ class H_Encoder(nn.Module):
                 in_channels = (initial_filters*(2**(i-1))) + 1
             out_channels = (initial_filters*(2**i)) + 1
 
-            self.conv_layers.add_module("Conv_"+str(i), LConv2d_Block(
+            self.conv_layers.add_module("Conv_"+str(i), blk_cls(
                 manifold=self.manifold, 
                 in_channels=in_channels, 
                 out_channels=out_channels, 
@@ -85,15 +100,24 @@ class H_Encoder(nn.Module):
 
     def forward(self, x):
         # project image pixels to hyperbolic space
-        x = x.permute(0,2,3,1)
+        if self.rank == 2:
+            x = x.permute(0,2,3,1)
+        else:
+            x = x.permute(0,2,1)
         # -> FROM HERE: CHANNEL LAST!!!
-        x = F.pad(x, pad=(1,0), mode="constant", value=0)
+        x = F.pad(x, pad=(1, 0), mode="constant", value=0)
         x = self.manifold.projx(x)
 
         x = self.conv_layers(x)
-        x = self.manifold.lorentz_flatten(x)
 
         # Embed
+        print('pre-flat', x.shape)
+        if self.rank == 2:
+            x = self.manifold.lorentz_flatten(x)
+        else:
+            x = self.manifold.lorentz_flatten(x[:, None])
+        print('post-flat', x.shape)
+
         mean = self.fcMean(x)
         var = self.fcVar(x)
         var = torch.clamp_min(F.softplus(var[..., 1:]), self.eps)
@@ -183,17 +207,25 @@ class H_Decoder(nn.Module):
             z_dim, 
             initial_filters, 
             learn_curvature = False,
-            curvature = 1.0
+            curvature = 1.0,
+            rank:int = 2
         ):
         super(H_Decoder, self).__init__()
 
         self.manifold = CustomLorentz(k=curvature, learnable=learn_curvature)
 
-        d,h,w = img_dim
-        self.z_h, self.z_w = 8, 8
 
         self.initial_filters = initial_filters
-        self.flatten_dim = int(self.z_h*self.z_w*initial_filters)
+
+        self.rank = rank
+        if rank == 2:
+            d,h,w = img_dim
+            self.z_h, self.z_w = 8, 8
+            self.flatten_dim = int(self.z_h*self.z_w*initial_filters)
+        else:
+            d, s = img_dim
+            self.z_s = 8
+            self.flatten_dim = int(self.z_s*initial_filters)
 
         self.pred_dim = 64
 
@@ -206,11 +238,18 @@ class H_Decoder(nn.Module):
             normalization="batch_norm"
         )
 
+        if rank == 2:
+            blk_cls = LTransposedConv2d_Block 
+            fin_cls = LConv2d_Block
+        else:
+            blk_cls = LTransposedConv1d_Block 
+            fin_cls = LConv1d_Block
+
         self.conv_layers = nn.Sequential()
         for i in range(num_layers-1):
             in_channels = int(initial_filters/(2**(i)))
             out_channels = int(initial_filters/(2**((i+1))))
-            self.conv_layers.add_module("TrConv_"+str(i), LTransposedConv2d_Block(
+            self.conv_layers.add_module("TrConv_"+str(i), blk_cls(
                 manifold=self.manifold, 
                 in_channels=in_channels+1, 
                 out_channels=out_channels+1, 
@@ -222,7 +261,8 @@ class H_Decoder(nn.Module):
                 normalization="batch_norm"
             ))
 
-        self.final_conv = LConv2d_Block( 
+        
+        self.final_conv = fin_cls( 
             manifold=self.manifold, 
             in_channels=int(initial_filters/2**(num_layers-1))+1, 
             out_channels=self.pred_dim+1, 
@@ -237,7 +277,14 @@ class H_Decoder(nn.Module):
 
     def forward(self, z):
         x = self.fc1(z)
-        x = self.manifold.lorentz_reshape_img(x, img_dim=[self.z_h, self.z_w, self.initial_filters+1])
+        if self.rank == 2:
+            x = self.manifold.lorentz_reshape_img(
+                    x, img_dim=[self.z_h, self.z_w, self.initial_filters+1]
+            )
+        else:
+            x = self.manifold.lorentz_reshape_img(
+                    x, img_dim=[self.z_s, 1, self.initial_filters+1]
+            ).squeeze(dim=-2)
 
         x = self.conv_layers(x)
         x = self.final_conv(x)
@@ -245,7 +292,10 @@ class H_Decoder(nn.Module):
         x = self.predictor(x)
         x = torch.sigmoid(x)
 
-        x = x.permute(0,3,1,2)
+        if self.rank == 2:
+            x = x.permute(0,3,1,2)
+        else:
+            x = x.permute(0,2,1)
 
         return x
 

@@ -4,9 +4,13 @@ from torch.nn import Module
 from lib.lorentz.manifold import CustomLorentz
 from lib.lorentz.layers import (
     LorentzFullyConnected, 
+
+    LorentzConv1d, 
+    LorentzConvTranspose1d,
+    LorentzBatchNorm1d,
+
     LorentzConv2d, 
     LorentzConvTranspose2d,
-    LorentzBatchNorm1d,
     LorentzBatchNorm2d,
 )
 
@@ -53,6 +57,110 @@ class LFC_Block(Module):
 
         return x
 
+class LConv1d_Block(Module):
+    """ Implementation of a hyperbolic 2D-convolutional Block.
+
+    Contains a hyperbolic 2D-convolutional layer followed by bnorm and ReLU-Activation.
+    """
+    def __init__(
+            self, 
+            manifold: CustomLorentz, 
+            in_channels, 
+            out_channels, 
+            kernel_size, 
+            stride, 
+            padding, 
+            bias=True,
+            activation=None, # e.g. torch.relu
+            normalization="None",
+            LFC_normalize=False
+        ):
+        super().__init__()
+
+        self.manifold = manifold
+        self.activation = activation
+        self.normalization = normalization
+
+        self.batch_norm = None
+        if normalization=="batch_norm":
+            self.batch_norm = LorentzBatchNorm1d(
+                    num_features=out_channels,
+                    manifold=self.manifold)
+
+        self.conv = LorentzConv1d(
+            manifold=self.manifold, 
+            in_channels=in_channels, 
+            out_channels=out_channels, 
+            kernel_size=kernel_size, 
+            stride=stride, 
+            padding=padding,
+            bias=bias,
+            LFC_normalize=LFC_normalize
+        )
+
+
+    def forward(self, x):
+        print(F'[c1.]got {x.shape}')
+        x = self.conv(x)
+        if self.batch_norm is not None:
+            x = self.batch_norm(x)
+        if self.activation is not None:
+            x = self.manifold.lorentz_activation(x, self.activation)
+        print(F'[c1.]out {x.shape}')
+        return x
+
+
+class LTransposedConv1d_Block(Module):
+    """ Implementation of a 2D Transposed convolutional Block in hyperbolic Space.
+
+    Contains a hyperbolic 2D-transposed convolutional layer followed by bnorm and ReLU-Activation.
+    """
+    def __init__(
+            self, 
+            manifold: CustomLorentz, 
+            in_channels, 
+            out_channels, 
+            kernel_size, 
+            stride, 
+            padding, 
+            bias=True,
+            activation=None,
+            normalization="None",
+            LFC_normalize=False
+        ):
+        super().__init__()
+
+        self.manifold = manifold
+        self.activation = activation
+        self.normalization = normalization
+
+        self.batch_norm = None
+        if normalization=="batch_norm":
+            self.batch_norm = LorentzBatchNorm1d(num_features=out_channels,
+                                                 manifold=self.manifold)
+
+        self.trConv = LorentzConvTranspose1d(
+            manifold=self.manifold, 
+            in_channels=in_channels, 
+            out_channels=out_channels, 
+            kernel_size=kernel_size, 
+            stride=stride, 
+            padding=padding,
+            bias=bias,
+            LFC_normalize=LFC_normalize
+        )
+
+
+    def forward(self, x):
+        print(F'[cT]got {x.shape}')
+        x = self.trConv(x)
+        if self.batch_norm is not None:
+            x = self.batch_norm(x)
+        if self.activation is not None:
+            x = self.manifold.lorentz_activation(x, self.activation)
+        print(F'[cT]out {x.shape}')
+        return x
+
 
 class LConv2d_Block(Module):
     """ Implementation of a hyperbolic 2D-convolutional Block.
@@ -95,13 +203,14 @@ class LConv2d_Block(Module):
 
 
     def forward(self, x):
+        print(F'[c2.]got {x.shape}')
         x = self.conv(x)
         
         if self.batch_norm is not None:
             x = self.batch_norm(x)
         if self.activation is not None:
             x = self.manifold.lorentz_activation(x, self.activation)
-
+        print(F'[c2.]out {x.shape}')
         return x
 
 
