@@ -1,10 +1,46 @@
 import torch
+import torch as th
 import torch.nn.functional as F
 from torch.distributions import MultivariateNormal
 
 import math
 
 from lib.lorentz.manifold import CustomLorentz
+
+class LogSinh(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        return th.log(th.sinh(x))
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, = ctx.saved_variables
+        gx = None
+        if ctx.needs_input_grad[0]:
+            gx = grad_output * th.reciprocal(torch.tanh(x))
+        return gx
+
+class LogSinhExprClass(torch.autograd.Function):
+    # computes log(sinh(x)/x), custom backward/forward to get numerical stability in x==0 and for large |x|
+    @staticmethod
+    def forward(ctx, input):
+        abs_in = torch.abs(input)
+        # m_exp_in_2 = torch.exp(-abs_in*2) # e ^ -2|x|
+        m_exp_in_2 = torch.expm1(-abs_in*2) # e ^ -2|x| - 1
+        ctx.save_for_backward(input, m_exp_in_2)
+        ret = abs_in + torch.log(-m_exp_in_2/(abs_in*2))
+        ret[abs_in < 0.1] = 0.0
+        return ret
+
+    def backward(ctx, grad_output):
+        input, m_exp_in_2 = ctx.saved_tensors
+        abs_in = torch.abs(input)
+        sign_in = torch.sign(input)
+        ret = 1 - (m_exp_in_2+1) / (m_exp_in_2) - 1/abs_in
+        ret[abs_in < 0.1] = 0.0
+        return ret*grad_output*sign_in
+log_sinh_expr = LogSinhExprClass.apply
 
 class LorentzWrappedNormal(torch.nn.Module):
     """ Implementation of a Hyperbolic Wrapped Normal distribution with diagonal covariance matrix defined by Nagano et al. (2019).
@@ -109,7 +145,22 @@ class LorentzWrappedNormal(torch.nn.Module):
                     ).log_prob(vT))
         # -> Calculate log p(z)
         r = self.manifold.norm(u)
-        log_det_proj_mu = (nT-1) * (torch.log(torch.sinh(r))-torch.log(r)) # Logarithm rules for easier computation
+
+        # Logarithm rules for easier computation
+        # log_det_proj_mu = (nT-1) * (torch.log(torch.sinh(r))-torch.log(r)) 
+        # print('r', r.min(), r.max())
+        # log_det_proj_mu = (nT-1) * (LogSinh.apply(r)-torch.log(r)) 
+
+        # a = 0.5 * 
+        # th.logsumexp(
+        # log_det_proj_mu = (nT-1) * (torch.log(torch.sinh(r)/r))
+        log_det_proj_mu = (nT-1) * log_sinh_expr(r)
+        # (torch.log(torch.sinh(r)/r))
+
+        # print(logp_vT.min(),
+        #       logp_vT.max(),
+        #       log_det_proj_mu.min(),
+        #       log_det_proj_mu.max())
         
         # Compute log likelihood
         logp_z = logp_vT - log_det_proj_mu

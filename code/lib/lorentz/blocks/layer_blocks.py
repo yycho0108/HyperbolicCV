@@ -100,13 +100,11 @@ class LConv1d_Block(Module):
 
 
     def forward(self, x):
-        print(F'[c1.]got {x.shape}')
         x = self.conv(x)
         if self.batch_norm is not None:
             x = self.batch_norm(x)
         if self.activation is not None:
             x = self.manifold.lorentz_activation(x, self.activation)
-        print(F'[c1.]out {x.shape}')
         return x
 
 
@@ -152,13 +150,11 @@ class LTransposedConv1d_Block(Module):
 
 
     def forward(self, x):
-        print(F'[cT]got {x.shape}')
         x = self.trConv(x)
         if self.batch_norm is not None:
             x = self.batch_norm(x)
         if self.activation is not None:
             x = self.manifold.lorentz_activation(x, self.activation)
-        print(F'[cT]out {x.shape}')
         return x
 
 
@@ -203,14 +199,12 @@ class LConv2d_Block(Module):
 
 
     def forward(self, x):
-        print(F'[c2.]got {x.shape}')
         x = self.conv(x)
         
         if self.batch_norm is not None:
             x = self.batch_norm(x)
         if self.activation is not None:
             x = self.manifold.lorentz_activation(x, self.activation)
-        print(F'[c2.]out {x.shape}')
         return x
 
 

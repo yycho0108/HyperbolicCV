@@ -45,25 +45,25 @@ class H_Encoder(nn.Module):
         self.flat = flat
 
         if rank == 2:
-            d,h,w = img_dim
-            self.z_h, self.z_w = int(h/(2**num_layers)), int(w/(2**num_layers))
+            d, h, w = img_dim
             self.z_filters = int(initial_filters*2**(num_layers-1))
-            self.flatten_dim = int(self.z_h*self.z_w*self.z_filters)
-            print('fdim', self.flatten_dim) # fdim = 2048
+            if self.flat:
+                self.z_h, self.z_w = int(h/(2**num_layers)), int(w/(2**num_layers))
+                self.flatten_dim = int(self.z_h*self.z_w*self.z_filters)
             blk_cls = LConv2d_Block 
         else:
-            d,s = img_dim
-            self.z_s = int(s/(2**num_layers))
+            d, s = img_dim
             self.z_filters = int(initial_filters*2**(num_layers-1))
-            self.flatten_dim = int(self.z_s*self.z_filters)
-            print('fdim', self.flatten_dim)
+            if self.flat:
+                self.z_s = int(s/(2**num_layers))
+                self.flatten_dim = int(self.z_s*self.z_filters)
             blk_cls = LConv1d_Block 
 
         # Convolutional layers
         self.conv_layers = nn.Sequential()
         for i in range(num_layers):
             if i==0:
-                in_channels = d+1
+                in_channels = d + 1
             else:
                 in_channels = (initial_filters*(2**(i-1))) + 1
             out_channels = (initial_filters*(2**i)) + 1
@@ -259,7 +259,8 @@ class H_Decoder(nn.Module):
             self.flatten_dim = int(self.z_h*self.z_w*initial_filters)
         else:
             d, s = img_dim
-            self.z_s = 8
+            #self.z_s = 8
+            self.z_s = 96
             self.flatten_dim = int(self.z_s*initial_filters)
         self.flat = flat
         self.pred_dim = 64
@@ -327,16 +328,15 @@ class H_Decoder(nn.Module):
 
     def forward(self, z):
         x = self.fc1(z)
-        print(F'got x = {x.shape}')
-        if self.rank == 2:
-            x = self.manifold.lorentz_reshape_img(
-                    x, img_dim=[self.z_h, self.z_w, self.initial_filters+1]
-            )
-        else:
-            x = self.manifold.lorentz_reshape_img(
-                    x, img_dim=[self.z_s, 1, self.initial_filters+1]
-            ).squeeze(dim=-2)
-        print(F'got unflatten x = {x.shape}')
+        if self.flat:
+            if self.rank == 2:
+                x = self.manifold.lorentz_reshape_img(
+                        x, img_dim=[self.z_h, self.z_w, self.initial_filters+1]
+                )
+            else:
+                x = self.manifold.lorentz_reshape_img(
+                        x, img_dim=[self.z_s, 1, self.initial_filters+1]
+                ).squeeze(dim=-2)
 
         x = self.conv_layers(x)
         x = self.final_conv(x)
