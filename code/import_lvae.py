@@ -23,22 +23,24 @@ class Config:
 
 
 def main():
-    img_dim = (3, 128, 128)
+    img_dim = (3, 256, 256)
     net = LVAE(img_dim,
-               1,
-               2,
+               4,
+               5,
                # z_dim
-               16,
+               128,
                8,
                learn_curvature=True,
                enc_K=1.0,
                dec_K=1.0,
-               rank=2)
+               rank=2,
+               flat=False)
     print('net', net)
     x = th.zeros((1, 3, 128, 128),
                  dtype=th.float32)
     print('inputs', x.shape)
     outputs = net(x)
+    loss = net.loss(x, outputs)
     print('outputs', outputs[0].shape)
 
 

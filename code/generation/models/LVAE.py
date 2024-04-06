@@ -28,10 +28,12 @@ class LVAE(nn.Module):
         learn_curvature = False,
         enc_K = 1.0,
         dec_K = 1.0,
-        rank:int = 2
+        rank:int = 2,
+        flat:bool=True
     ):
         super(LVAE, self).__init__()
 
+        self.flat = flat
         self.encoder = H_Encoder(
             img_dim, 
             enc_layers, 
@@ -39,9 +41,13 @@ class LVAE(nn.Module):
             initial_filters, 
             learn_curvature, 
             enc_K,
-            rank=rank
+            rank=rank,
+            flat=flat
         )
-        self.embedding = H_Embedding(z_dim, share_manifold=self.encoder.manifold)
+        self.embedding = H_Embedding(z_dim,
+                                     share_manifold=self.encoder.manifold,
+                                     rank= rank,
+                                     flat=flat)
 
         self.decoder = H_Decoder(
             img_dim, 
@@ -50,7 +56,8 @@ class LVAE(nn.Module):
             initial_filters*(2**(enc_layers-1)), 
             learn_curvature, 
             dec_K,
-            rank=rank
+            rank=rank,
+            flat=flat
         )
 
     def check_k_embed(self, x):
@@ -87,12 +94,24 @@ class LVAE(nn.Module):
         return self.forward(x)[0]
 
     def forward(self, x):
-        mean, var = self.encoder(x) # outputs (I assume) 1+(8x8)
-        print('mean', mean.shape)
+        # outputs (I assume) 1+(8x8)
+        mean, var = self.encoder(x) 
         mean_dec = self.check_k_embed(mean)
-        z, mean_H, covar, u, v = self.embedding(mean_dec, var)
+        if self.flat:
+            z, mean_H, covar, u, v = self.embedding(mean_dec, var)
+        else:
+            s = mean_dec.shape
+            md = mean_dec.reshape(-1, mean_dec.shape[-1])
+            vv = var.reshape(-1, var.shape[-1])
+            z, mean_H, covar, u, v = self.embedding(md, vv)
+
+            z = z.reshape(*s[:-1], *z.shape[-1:])
+            mean_H = mean_H.reshape(*s[:-1], *mean_H.shape[-1:])
+            covar = covar.reshape(*s[:-1], *covar.shape[-2:])
+            u = u.reshape(*s[:-1], *u.shape[-1:])
+            v = v.reshape(*s[:-1], *v.shape[-1:])
+
         z_dec = self.check_k_dec(z)
-        print('z_dec', z_dec.shape)
         x_hat = self.decoder(z_dec)
 
         return x_hat, z, mean_H, covar, u, v
@@ -101,6 +120,15 @@ class LVAE(nn.Module):
         """ Computes the ELBO loss. """
         x_hat, z, mean_H, covar, u, v = outputs
         rec_loss = 0.5 * torch.sum(torch.square(x-x_hat), dim=(1,2,3)) # MSE
-        kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
+
+        if self.flat:
+            kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
+        else:
+            z = z.reshape(-1, z.shape[-1])
+            mean_H = mean_H.reshape(-1, mean_H.shape[-1])
+            covar = covar.reshape(-1, *covar.shape[-2:])
+            u = u.reshape(-1, u.shape[-1])
+            v = v.reshape(-1, v.shape[-1])
+            kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
 
         return rec_loss, kl_loss

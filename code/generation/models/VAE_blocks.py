@@ -42,6 +42,7 @@ class H_Encoder(nn.Module):
         self.z_dim = z_dim
 
         self.rank = rank
+        self.flat = flat
 
         if rank == 2:
             d,h,w = img_dim
@@ -80,23 +81,48 @@ class H_Encoder(nn.Module):
             )
 
         # Fully-connected layers
-        self.fcMean = LFC_Block(
-            manifold=self.manifold, 
-            in_features=self.flatten_dim+1, 
-            out_features=z_dim+1, 
-            bias=True,
-            activation=None,
-            normalization="None"
-        )
-        self.fcVar = LFC_Block(
-            manifold=self.manifold, 
-            in_features=self.flatten_dim+1,
-            out_features=z_dim+1, 
-            bias=True,
-            activation=None,
-            normalization="None"
-        )
-        
+        if self.flat:
+            self.fcMean = LFC_Block(
+                manifold=self.manifold, 
+                in_features=self.flatten_dim+1, 
+                out_features=z_dim+1, 
+                bias=True,
+                activation=None,
+                normalization="None"
+            )
+            self.fcVar = LFC_Block(
+                manifold=self.manifold, 
+                in_features=self.flatten_dim+1,
+                out_features=z_dim+1, 
+                bias=True,
+                activation=None,
+                normalization="None"
+            )
+        else:
+            self.fcMean = blk_cls(
+                manifold=self.manifold, 
+                in_channels=out_channels, 
+                out_channels=z_dim+1, 
+                kernel_size=1, 
+                stride=1, 
+                padding=0,
+                bias=True,
+                activation=None,
+                normalization="None"
+            )
+            self.fcVar = blk_cls(
+                manifold=self.manifold, 
+                in_channels=out_channels, 
+                out_channels=z_dim+1, 
+                kernel_size=1, 
+                stride=1, 
+                padding=0,
+                bias=True,
+                activation=None,
+                normalization="None"
+            )
+
+            
 
     def forward(self, x):
         # project image pixels to hyperbolic space
@@ -111,16 +137,21 @@ class H_Encoder(nn.Module):
         x = self.conv_layers(x)
 
         # Embed
-        print('pre-flat', x.shape)
-        if self.rank == 2:
-            x = self.manifold.lorentz_flatten(x)
-        else:
-            x = self.manifold.lorentz_flatten(x[:, None])
-        print('post-flat', x.shape)
+        if self.flat:
+            print('pre-flat', x.shape)
+            if self.rank == 2:
+                x = self.manifold.lorentz_flatten(x)
+            else:
+                x = self.manifold.lorentz_flatten(x[:, None])
+            print('post-flat', x.shape)
 
-        mean = self.fcMean(x)
-        var = self.fcVar(x)
-        var = torch.clamp_min(F.softplus(var[..., 1:]), self.eps)
+            mean = self.fcMean(x)
+            var = self.fcVar(x)
+            var = torch.clamp_min(F.softplus(var[..., 1:]), self.eps)
+        else:
+            mean = self.fcMean(x)
+            var = self.fcVar(x)
+            var = torch.clamp_min(F.softplus(var[..., 1:]), self.eps)
 
         return mean, var
 
@@ -133,12 +164,15 @@ class H_Embedding(nn.Module):
             learn_curvature = False,
             curvature = 1.0,
             euclidean_input = False,
-            share_manifold: CustomLorentz = None
+            share_manifold: CustomLorentz = None,
+            rank:int = 2,
+            flat:bool = True
         ):
         super(H_Embedding, self).__init__()
 
         if share_manifold is None:
-            self.manifold = CustomLorentz(k=curvature, learnable=learn_curvature)
+            self.manifold = CustomLorentz(k=curvature,
+                                          learnable=learn_curvature)
         else:
             self.manifold = share_manifold
 
@@ -173,7 +207,8 @@ class H_Embedding(nn.Module):
 
         # Sample from distribution
         covar = self.distr.make_covar(var, rescale=True)
-        z, u, v = self.distr.rsample(mean_H, covar, num_samples=1, ret_uv=True) # Note: Loss is not implemented for multiple samples
+        # Note: Loss is not implemented for multiple samples
+        z, u, v = self.distr.rsample(mean_H, covar, num_samples=1, ret_uv=True) 
 
         return z, mean_H, covar, u[0], v[0]
 
@@ -208,12 +243,12 @@ class H_Decoder(nn.Module):
             initial_filters, 
             learn_curvature = False,
             curvature = 1.0,
-            rank:int = 2
+            rank:int = 2,
+            flat:bool=True
         ):
         super(H_Decoder, self).__init__()
 
         self.manifold = CustomLorentz(k=curvature, learnable=learn_curvature)
-
 
         self.initial_filters = initial_filters
 
@@ -226,17 +261,8 @@ class H_Decoder(nn.Module):
             d, s = img_dim
             self.z_s = 8
             self.flatten_dim = int(self.z_s*initial_filters)
-
+        self.flat = flat
         self.pred_dim = 64
-
-        self.fc1 = LFC_Block(
-            manifold=self.manifold, 
-            in_features=z_dim+1, 
-            out_features=self.flatten_dim+1, 
-            bias=True,
-            activation=torch.relu,
-            normalization="batch_norm"
-        )
 
         if rank == 2:
             blk_cls = LTransposedConv2d_Block 
@@ -244,6 +270,30 @@ class H_Decoder(nn.Module):
         else:
             blk_cls = LTransposedConv1d_Block 
             fin_cls = LConv1d_Block
+
+        if self.flat:
+            self.fc1 = LFC_Block(
+                manifold=self.manifold, 
+                in_features=z_dim+1, 
+                out_features=self.flatten_dim+1, 
+                bias=True,
+                activation=torch.relu,
+                normalization="batch_norm"
+            )
+        else:
+            # 1x1 conv
+            self.fc1 = blk_cls(
+                manifold=self.manifold, 
+                in_channels=z_dim+1, 
+                out_channels=initial_filters+1, 
+                kernel_size=1, 
+                stride=1, 
+                padding=0,
+                bias=True,
+                activation=torch.relu,
+                normalization="batch_norm"
+            )
+
 
         self.conv_layers = nn.Sequential()
         for i in range(num_layers-1):
@@ -277,6 +327,7 @@ class H_Decoder(nn.Module):
 
     def forward(self, z):
         x = self.fc1(z)
+        print(F'got x = {x.shape}')
         if self.rank == 2:
             x = self.manifold.lorentz_reshape_img(
                     x, img_dim=[self.z_h, self.z_w, self.initial_filters+1]
@@ -285,6 +336,7 @@ class H_Decoder(nn.Module):
             x = self.manifold.lorentz_reshape_img(
                     x, img_dim=[self.z_s, 1, self.initial_filters+1]
             ).squeeze(dim=-2)
+        print(F'got unflatten x = {x.shape}')
 
         x = self.conv_layers(x)
         x = self.final_conv(x)
