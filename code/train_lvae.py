@@ -47,6 +47,7 @@ def collate_fn(xlist):
 
 @with_oc_cli_v2
 def main(cfg: Config = Config):
+    print(cfg)
     th.backends.cudnn.benchmark = True
     th.autograd.set_detect_anomaly(True)
 
