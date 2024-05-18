@@ -122,8 +122,10 @@ class LVAE(nn.Module):
         """ Computes the ELBO loss. """
         x_hat, z, mean_H, covar, u, v = outputs
         # rec_loss = 0.5 * torch.sum(torch.square(x-x_hat), dim=(1,2,3)) # MSE
-        rec_loss = 0.5 * torch.square(x - x_hat).reshape(
-            x.shape[0], -1).sum(dim=-1)
+        # print(x.shape, x_hat.shape)
+        #rec_loss = 0.5 * torch.square(x - x_hat).reshape(
+        #    x.shape[0], -1).sum(dim=-1)
+        rec_loss = F.mse_loss(x_hat, x)
 
         if self.flat:
             kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
