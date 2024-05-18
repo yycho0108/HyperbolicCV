@@ -47,6 +47,7 @@ class LorentzConv1d(nn.Module):
 
     def forward(self, x):
         """ x has to be in channel-last representation -> Shape = bs x len x C """
+        # print('(conv)x', x)
         bsz = x.shape[0]
 
         # origin padding
@@ -62,6 +63,7 @@ class LorentzConv1d(nn.Module):
         patches_space = patches.narrow(2, 1, patches.shape[2]-1).reshape(bsz, patches.shape[1], -1)
         patches_pre_kernel = torch.concat((patches_time_rescaled, patches_space), dim=-1)
 
+        # print('pre', patches_pre_kernel)
         out = self.linearized_kernel(patches_pre_kernel)
 
         return out

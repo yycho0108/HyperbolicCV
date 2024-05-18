@@ -123,9 +123,13 @@ class LVAE(nn.Module):
         x_hat, z, mean_H, covar, u, v = outputs
         # rec_loss = 0.5 * torch.sum(torch.square(x-x_hat), dim=(1,2,3)) # MSE
         # print(x.shape, x_hat.shape)
-        #rec_loss = 0.5 * torch.square(x - x_hat).reshape(
+        # rec_loss = 0.5 * torch.square(x - x_hat).reshape(
         #    x.shape[0], -1).sum(dim=-1)
+
+        # 16,1,256,256 <-> 16,1,64,64
+        # print(x_hat.shape, x.shape)
         rec_loss = F.mse_loss(x_hat, x)
+        # print(rec_loss)
 
         if self.flat:
             kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
@@ -137,7 +141,8 @@ class LVAE(nn.Module):
             u = u.reshape(-1, u.shape[-1])
             v = v.reshape(-1, v.shape[-1])
             kl_loss = self.embedding.loss(z, mean_H, covar, u, v)
-            kl_loss = kl_loss.reshape(*s[:-1],
-                                      *kl_loss.shape[1:]).sum(dim=-1)
+            kl_loss = kl_loss.reshape(
+                *s[:-1], *kl_loss.shape[1:])  # .sum(dim=-1)
+            kl_loss = kl_loss.mean()
 
         return rec_loss, kl_loss

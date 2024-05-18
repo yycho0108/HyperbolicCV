@@ -105,6 +105,7 @@ class LConv1d_Block(Module):
             x = self.batch_norm(x)
         if self.activation is not None:
             x = self.manifold.lorentz_activation(x, self.activation)
+        # print('out', x)
         return x
 
 

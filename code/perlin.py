@@ -8,6 +8,8 @@ import torch as th
 import einops
 from matplotlib import pyplot as plt
 
+from etude.model.layers import SinusoidalPositionalEncoding
+
 
 def nxtp2(n: int):
     return int(2**np.ceil(np.log2(n)))
@@ -60,9 +62,14 @@ def perlin_1d(batch_size: int,
         # relative positions w.r.t. grid corners
         relp = (grid % substep) / substep
         amplitude = persistence ** (num_octave - o)
-        dy = amplitude * lerp(gprv,
-                              gnxt,
-                              fade(relp))
+        if isinstance(amplitude, float):
+            dy = amplitude * lerp(gprv,
+                                  gnxt,
+                                  fade(relp))
+        else:
+            dy = amplitude[..., None] * lerp(gprv,
+                                             gnxt,
+                                             fade(relp))
 
         y += dy  # amplitude*lerp(gprv*relp, gnxt*(relp-1), fade(relp))
 
@@ -78,6 +85,9 @@ class PerlinNoiseDataset(th.utils.data.IterableDataset):
         num_octave: Optional[int] = None
         persistence_bound: Tuple[float, float] = (0.3, 0.7)
         device: Optional[str] = None
+        hack_2d: bool = False
+        positive: bool = False
+        pos_emb: Optional[int] = None
 
     def __init__(self,
                  cfg: Config,
@@ -89,11 +99,42 @@ class PerlinNoiseDataset(th.utils.data.IterableDataset):
 
     @property
     def obs_dim(self):
+        cfg=self.cfg
+        if cfg.pos_emb:
+            return cfg.pos_emb
         return 1
 
     @property
     def seq_len(self):
         return self.cfg.seq_len
+
+    def get(self):
+        cfg = self.cfg
+        out = {'trajectory': perlin_1d(cfg.batch_size,
+                                       cfg.seq_len,
+                                       cfg.num_octave,
+                                       cfg.persistence_bound,
+                                       self.device)[..., None]}
+
+        if cfg.pos_emb:
+            # map to higher-frequency features,
+            # with positional embedding
+            # out['trajectory'] = SinusoidalPositionalEncoding(
+            #     1, cfg.pos_emb).to(self.device)(
+            #     out['trajectory'])
+            pass
+
+        if cfg.hack_2d:
+            out['trajectory'] = einops.repeat(out['trajectory'],
+                                              '... t1 c -> ... c t1 t2',
+                                              t1=cfg.seq_len,
+                                              t2=cfg.seq_len)
+
+        if cfg.positive:
+            # print(out['trajectory'].min())
+            out['trajectory'] = 0.5 * (out['trajectory'] + 1)
+            # print(out['trajectory'].min())
+        return out
 
     def __iter__(self):
         cfg = self.cfg
@@ -109,12 +150,7 @@ class PerlinNoiseDataset(th.utils.data.IterableDataset):
             worker_id = worker_info.id
             iter_start = worker_id * per_worker
             iter_end = min(iter_start + per_worker, cfg.epoch_size)
-        return ({'trajectory': perlin_1d(cfg.batch_size,
-                                         cfg.seq_len,
-                                         cfg.num_octave,
-                                         cfg.persistence_bound,
-                                         self.device)[..., None]}
-                for _ in range(iter_start, iter_end))
+        return (self.get() for _ in range(iter_start, iter_end))
 
 
 def plot_fade():

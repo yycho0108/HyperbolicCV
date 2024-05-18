@@ -3,7 +3,7 @@
 import sys
 import numpy as np
 import torch as th
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from torch.optim.lr_scheduler import StepLR
 from tqdm.auto import tqdm
 
@@ -28,12 +28,12 @@ from pkm.train.ckpt import (load_ckpt, save_ckpt)
 
 @dataclass
 class Config:
-    data: DataConfig = DataConfig(
+    data: DataConfig = replace(DataConfig(
         dataset_type='shelf',
         normalize=True,
-    )
+    ), shelf=
     device: str = 'cuda:0'
-    batch_size: int = 256
+    batch_size: int = 32
     kl_coeff: float = 0.024
 
 

@@ -138,12 +138,12 @@ class H_Encoder(nn.Module):
 
         # Embed
         if self.flat:
-            print('pre-flat', x.shape)
+            # print('pre-flat', x.shape)
             if self.rank == 2:
                 x = self.manifold.lorentz_flatten(x)
             else:
                 x = self.manifold.lorentz_flatten(x[:, None])
-            print('post-flat', x.shape)
+            # print('post-flat', x.shape)
 
             mean = self.fcMean(x)
             var = self.fcVar(x)
@@ -255,12 +255,14 @@ class H_Decoder(nn.Module):
         self.rank = rank
         if rank == 2:
             d,h,w = img_dim
-            self.z_h, self.z_w = 8, 8
+            #self.z_h, self.z_w = 8, 8
+            self.z_h, self.z_w = 2, 2
             self.flatten_dim = int(self.z_h*self.z_w*initial_filters)
         else:
             d, s = img_dim
             #self.z_s = 8
-            self.z_s = 96
+            # self.z_s = 96
+            self.z_s = 2
             self.flatten_dim = int(self.z_s*initial_filters)
         self.flat = flat
         self.pred_dim = 64
